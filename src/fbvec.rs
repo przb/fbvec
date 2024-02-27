@@ -1,3 +1,4 @@
+use std::ops::{Deref, DerefMut};
 use std::{alloc, ptr};
 use std::{alloc::Layout, mem, ptr::NonNull};
 
@@ -67,6 +68,34 @@ impl<T> FbVec<T> {
             unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
         }
     }
+    pub fn insert(&mut self, index: usize, elem: T) {
+        assert!(index <= self.len(), "Index out of bounds");
+        if self.len == self.cap {
+            self.grow();
+        }
+        unsafe {
+            ptr::copy(
+                self.ptr.as_ptr().add(index),
+                self.ptr.as_ptr().add(index + 1),
+                self.len - index,
+            );
+            ptr::write(self.ptr.as_ptr().add(index), elem)
+        }
+        self.len += 1;
+    }
+    pub fn remove(&mut self, index: usize, elem: T) -> T {
+        assert!(index < self.len, "index out of bounds");
+        unsafe {
+            self.len -= 1;
+            let result = ptr::read(self.ptr.as_ptr().add(index));
+            ptr::copy(
+                self.ptr.as_ptr().add(index + 1),
+                self.ptr.as_ptr().add(index),
+                self.len - index,
+            );
+            result
+        }
+    }
 }
 
 impl<T> Drop for FbVec<T> {
@@ -76,5 +105,19 @@ impl<T> Drop for FbVec<T> {
             let layout = Layout::array::<T>(self.cap).unwrap();
             unsafe { alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout) }
         }
+    }
+}
+
+impl<T> Deref for FbVec<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<T> DerefMut for FbVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
