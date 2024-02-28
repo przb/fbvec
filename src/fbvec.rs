@@ -83,7 +83,7 @@ impl<T> FbVec<T> {
         }
         self.len += 1;
     }
-    pub fn remove(&mut self, index: usize, elem: T) -> T {
+    pub fn remove(&mut self, index: usize) -> T {
         assert!(index < self.len, "index out of bounds");
         unsafe {
             self.len -= 1;
