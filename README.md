@@ -7,5 +7,5 @@ in Rust. This is not to say that it is necessary; I am just working on it becaus
 
 # Source Docs
 These are some of the docs that I am using:
-1. [The Rustonomicon](https://doc.rust-lang.org/nomicon/vec/)
+1. [The Rustonomicon](https://doc.rust-lang.org/nomicon/vec/vec.html)
 2. [The fbvec github](https://github.com/facebook/folly/blob/main/folly/docs/FBVector.md)
