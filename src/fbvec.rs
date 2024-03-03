@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::{alloc, ptr};
@@ -125,6 +126,14 @@ impl<T> FbVec<T> {
             result
         }
     }
+    pub fn drain(&mut self) -> Drain<T> {
+        let iter = unsafe { RawValIter::new(&self) };
+        self.len = 0;
+        Drain {
+            iter,
+            vec: PhantomData,
+        }
+    }
 }
 
 impl<T> Drop for FbVec<T> {
@@ -147,33 +156,24 @@ impl<T> DerefMut for FbVec<T> {
     }
 }
 
-pub struct IntoIter<T> {
-    _buf: RawFbVec<T>,
+struct RawValIter<T> {
     start: *const T,
     end: *const T,
 }
-
-impl<T> IntoIterator for FbVec<T> {
-    type Item = T;
-
-    type IntoIter = IntoIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let buf = unsafe { ptr::read(&self.buf) };
-        let len = self.len;
-        mem::forget(self);
-        IntoIter {
-            start: buf.ptr.as_ptr(),
-            end: if buf.cap == 0 {
-                buf.ptr.as_ptr()
+impl<T> RawValIter<T> {
+    unsafe fn new(slice: &[T]) -> Self {
+        RawValIter {
+            start: slice.as_ptr(),
+            end: if slice.len() == 0 {
+                slice.as_ptr()
             } else {
-                unsafe { buf.ptr.as_ptr().add(len) }
+                slice.as_ptr().add(slice.len())
             },
-            _buf: buf,
         }
     }
 }
-impl<T> Iterator for IntoIter<T> {
+
+impl<T> Iterator for RawValIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -192,7 +192,7 @@ impl<T> Iterator for IntoIter<T> {
         (len, Some(len))
     }
 }
-impl<T> DoubleEndedIterator for IntoIter<T> {
+impl<T> DoubleEndedIterator for RawValIter<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.start == self.end {
             None
@@ -204,7 +204,68 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
         }
     }
 }
+
+pub struct IntoIter<T> {
+    _buf: RawFbVec<T>,
+    iter: RawValIter<T>,
+}
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        self.iter.next_back()
+    }
+}
 impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        for _ in &mut *self {}
+    }
+}
+
+impl<T> IntoIterator for FbVec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        unsafe {
+            let iter = RawValIter::new(&self);
+
+            let buf = ptr::read(&self.buf);
+            mem::forget(self);
+
+            IntoIter { iter, _buf: buf }
+        }
+    }
+}
+
+pub struct Drain<'a, T: 'a> {
+    vec: PhantomData<&'a mut Vec<T>>,
+    iter: RawValIter<T>,
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+impl<'a, T> DoubleEndedIterator for Drain<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back()
+    }
+}
+impl<'a, T> Drop for Drain<'a, T> {
     fn drop(&mut self) {
         for _ in &mut *self {}
     }
