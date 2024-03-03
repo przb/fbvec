@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::{alloc, ptr};
 use std::{alloc::Layout, mem, ptr::NonNull};
@@ -17,19 +16,27 @@ unsafe impl<T: Sync> Sync for RawFbVec<T> {}
 impl<T> RawFbVec<T> {
     fn new() -> Self {
         assert!(mem::size_of::<T>() != 0, "TODO impl ZST support");
+        let cap = if mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            0
+        };
         RawFbVec {
             ptr: NonNull::dangling(),
-            cap: 0,
+            cap,
         }
     }
     fn grow(&mut self) {
-        let new_cap = if self.cap == 0 {
-            1
+        assert!(mem::size_of::<T>() != 0, "capacity overflow");
+
+        let (new_cap, new_layout) = if self.cap == 0 {
+            (1, Layout::array::<T>(1).unwrap())
         } else {
-            GROWTH_RATE * self.cap
+            let new_cap = GROWTH_RATE * self.cap;
+            let new_layout = Layout::array::<T>(new_cap).unwrap();
+            (new_cap, new_layout)
         };
 
-        let new_layout = Layout::array::<T>(new_cap).unwrap();
         assert!(
             new_layout.size() <= isize::MAX as usize,
             "Allocation too large"
@@ -52,10 +59,13 @@ impl<T> RawFbVec<T> {
 }
 impl<T> Drop for RawFbVec<T> {
     fn drop(&mut self) {
-        if self.cap == 0 {
-            let layout = Layout::array::<T>(self.cap).unwrap();
+        let elem_size = mem::size_of::<T>();
+        if self.cap != 0 && elem_size != 0 {
             unsafe {
-                alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+                alloc::dealloc(
+                    self.ptr.as_ptr() as *mut u8,
+                    Layout::array::<T>(self.cap).unwrap(),
+                );
             }
         }
     }
@@ -164,7 +174,9 @@ impl<T> RawValIter<T> {
     unsafe fn new(slice: &[T]) -> Self {
         RawValIter {
             start: slice.as_ptr(),
-            end: if slice.len() == 0 {
+            end: if mem::size_of::<T>() == 0 {
+                ((slice.as_ptr() as usize) + slice.len()) as *const _
+            } else if slice.len() == 0 {
                 slice.as_ptr()
             } else {
                 slice.as_ptr().add(slice.len())
@@ -181,14 +193,21 @@ impl<T> Iterator for RawValIter<T> {
             None
         } else {
             unsafe {
-                let result = ptr::read(self.start);
-                self.start = self.start.offset(1);
-                Some(result)
+                if mem::size_of::<T>() == 0 {
+                    self.start = (self.start as usize + 1) as *const _;
+                    Some(ptr::read(NonNull::<T>::dangling().as_ptr()))
+                } else {
+                    let old_ptr = self.start;
+                    self.start = self.start.offset(1);
+                    Some(ptr::read(old_ptr))
+                }
             }
         }
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = (self.end as usize - self.start as usize) / mem::size_of::<T>();
+        let elem_size = mem::size_of::<T>();
+        let len =
+            (self.end as usize - self.start as usize) / if elem_size == 0 { 1 } else { elem_size };
         (len, Some(len))
     }
 }
@@ -198,8 +217,13 @@ impl<T> DoubleEndedIterator for RawValIter<T> {
             None
         } else {
             unsafe {
-                self.end = self.end.offset(-1);
-                Some(ptr::read(self.end))
+                if mem::size_of::<T>() == 0 {
+                    self.end = (self.end as usize - 1) as *const _;
+                    Some(ptr::read(NonNull::<T>::dangling().as_ptr()))
+                } else {
+                    self.end = self.end.offset(-1);
+                    Some(ptr::read(self.end))
+                }
             }
         }
     }
